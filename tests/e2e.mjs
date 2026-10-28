@@ -70,9 +70,9 @@ try {
   await waitForLog(page, 'Mounted', 120_000);
   logLine('PASS: Game files mounted to MEMFS');
 
-  // Dump log after mount for debugging
+  // Dump log for debugging
   const logAfterMount = await page.$eval('#log-content', el => el.textContent).catch(() => '');
-  logLine('Log after mount: ' + logAfterMount.slice(-800));
+  logLine('Log (tail 800): ' + logAfterMount.slice(-800));
 
   // Give the emulator time to init (calloc 512MB etc)
   await page.waitForTimeout(3000);
@@ -111,6 +111,9 @@ try {
   logLine(`\nFinal status: ${finalStatus}`);
   logLine('--- Milestone Summary ---');
 
+  const hleMatch = finalLogs.match(/HLE calls=(\d+)/);
+  const hleCalls = hleMatch ? parseInt(hleMatch[1], 10) : 0;
+
   const milestones = [
     ['WASM loaded',           finalLogs.includes('runtime initialized')],
     ['Files mounted',         finalLogs.includes('Mounted')],
@@ -120,6 +123,7 @@ try {
     ['Interpreter executing',  finalLogs.includes('Game started') || finalLogs.includes('Running') ||
                                finalLogs.includes('opcode') || finalLogs.includes('RIP') ||
                                finalStatus === 'Running'],
+    ['HLE calls fired',       hleCalls > 0],
   ];
 
   let passed = 0;

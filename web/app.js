@@ -103,8 +103,9 @@ function stringToWasm(str) {
   const encoder = new TextEncoder();
   const bytes = encoder.encode(str);
   const ptr = M._malloc(bytes.length + 1);
-  M.HEAPU8.set(bytes, ptr);
-  M.HEAPU8[ptr + bytes.length] = 0;
+  const heap = new Uint8Array(M.wasmMemory ? M.wasmMemory.buffer : M.HEAPU8.buffer);
+  heap.set(bytes, ptr);
+  heap[ptr + bytes.length] = 0;
   return ptr;
 }
 
@@ -279,32 +280,22 @@ function frameLoop(timestamp) {
   const M = state.Module;
   diag.frameBegin(timestamp);
 
-  const padState = input.poll();
-  if (M._kyty_input) {
-    const buf = M._malloc(64);
-    const view = new DataView(M.HEAPU8.buffer, buf, 64);
-    view.setUint32(0, padState.buttons, true);
-    view.setFloat32(4, padState.lx, true);
-    view.setFloat32(8, padState.ly, true);
-    view.setFloat32(12, padState.rx, true);
-    view.setFloat32(16, padState.ry, true);
-    view.setFloat32(20, padState.l2, true);
-    view.setFloat32(24, padState.r2, true);
-    M._kyty_input(buf);
-    M._free(buf);
-  }
+  try {
+    const padState = input.poll();
+    if (M.ccall) {
+      M.ccall('kyty_input_values', null,
+        ['number', 'number', 'number', 'number', 'number', 'number', 'number'],
+        [padState.buttons, padState.lx, padState.ly, padState.rx, padState.ry, padState.l2, padState.r2]);
+    }
 
-  if (M._kyty_frame) {
-    M._kyty_frame();
-  }
-
-  if (M._kyty_audio_callback && audio.needsSamples()) {
-    const frames = 1024;
-    const buf = M._malloc(frames * 4 * 2);
-    M._kyty_audio_callback(buf, frames);
-    const samples = new Float32Array(M.HEAPU8.buffer, buf, frames * 2);
-    audio.pushSamples(samples);
-    M._free(buf);
+    if (M._kyty_frame) {
+      M._kyty_frame();
+    }
+  } catch (err) {
+    if (!frameLoop._errLogged) {
+      log(`Frame error: ${err.message}`, 'warn');
+      frameLoop._errLogged = true;
+    }
   }
 
   diag.frameEnd();
