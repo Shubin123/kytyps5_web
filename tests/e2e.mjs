@@ -72,7 +72,7 @@ try {
 
   // Dump log for debugging
   const logAfterMount = await page.$eval('#log-content', el => el.textContent).catch(() => '');
-  logLine('Log (tail 800): ' + logAfterMount.slice(-800));
+  logLine('Log (tail 5000): ' + logAfterMount.slice(-5000));
 
   // Give the emulator time to init (calloc 512MB etc)
   await page.waitForTimeout(3000);
@@ -111,19 +111,30 @@ try {
   logLine(`\nFinal status: ${finalStatus}`);
   logLine('--- Milestone Summary ---');
 
-  const hleMatch = finalLogs.match(/HLE calls=(\d+)/);
-  const hleCalls = hleMatch ? parseInt(hleMatch[1], 10) : 0;
+  // Extract quantitative data from logs
+  const hleMatches = [...finalLogs.matchAll(/HLE calls=(\d+)/g)];
+  const hleCalls = hleMatches.length > 0
+    ? Math.max(...hleMatches.map(m => parseInt(m[1], 10)))
+    : 0;
+
+  const totalMatches = [...finalLogs.matchAll(/total=(\d+)/g)];
+  const totalInsns = totalMatches.length > 0
+    ? Math.max(...totalMatches.map(m => parseInt(m[1], 10)))
+    : 0;
+
+  const gotPatchMatch = finalLogs.match(/patched (\d+) GOT entries/);
+  const gotPatched = gotPatchMatch ? parseInt(gotPatchMatch[1], 10) : 0;
+
+  logLine(`Interpreter stats: ${totalInsns} instructions, ${hleCalls} HLE calls, ${gotPatched} GOT entries`);
 
   const milestones = [
     ['WASM loaded',           finalLogs.includes('runtime initialized')],
     ['Files mounted',         finalLogs.includes('Mounted')],
-    ['Emulator initialized',  finalLogs.includes('initializing emulator') || finalLogs.includes('allocated')],
-    ['Game load attempted',   finalLogs.includes('loading game') || finalLogs.includes('eboot')],
-    ['ELF parsed',            finalLogs.includes('entry point') || finalLogs.includes('loaded and running') || finalLogs.includes('segment')],
-    ['Interpreter executing',  finalLogs.includes('Game started') || finalLogs.includes('Running') ||
-                               finalLogs.includes('opcode') || finalLogs.includes('RIP') ||
-                               finalStatus === 'Running'],
-    ['HLE calls fired',       hleCalls > 0],
+    ['Emulator initialized',  finalLogs.includes('allocated') && finalLogs.includes('emulator initialized')],
+    ['ELF loaded & relocated', finalLogs.includes('entry point') && gotPatched > 0],
+    ['Game code executing',   totalInsns >= 1000],
+    ['PLT/HLE calls working', hleCalls >= 10],
+    ['Sustained execution',   totalInsns >= 5000 && hleCalls >= 50],
   ];
 
   let passed = 0;
@@ -134,8 +145,11 @@ try {
 
   logLine(`\n${passed}/${milestones.length} milestones reached`);
 
-  if (passed >= 4) {
-    logLine('SUCCESS: Core e2e pipeline verified (WASM → mount → init → ELF → interpreter)');
+  if (passed >= 6) {
+    logLine('SUCCESS: Game binary executing with HLE interception verified');
+    exitCode = 0;
+  } else if (passed >= 4) {
+    logLine('PARTIAL: Core pipeline works but game execution limited');
     exitCode = 0;
   } else {
     logLine('INSUFFICIENT: Core pipeline incomplete');
