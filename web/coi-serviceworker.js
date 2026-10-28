@@ -72,10 +72,19 @@ if (typeof window === 'undefined') {
         (registration) => {
           console.log('COOP/COEP Service Worker registered', registration.scope);
 
+          // Reloading before the worker activates leaves the new page uncontrolled (and the
+          // coiReloadedByCOI guard then blocks a retry), so wait for activation.
           registration.addEventListener('updatefound', () => {
-            console.log('COOP/COEP Service Worker update found, reloading...');
-            window.sessionStorage.setItem('coiReloadedByCOI', 'true');
-            window.location.reload();
+            const worker = registration.installing;
+            const reload = () => {
+              console.log('COOP/COEP Service Worker activated, reloading...');
+              window.sessionStorage.setItem('coiReloadedByCOI', 'true');
+              window.location.reload();
+            };
+            if (!worker || worker.state === 'activated') return reload();
+            worker.addEventListener('statechange', () => {
+              if (worker.state === 'activated') reload();
+            });
           });
 
           if (registration.active && !navigator.serviceWorker.controller) {
