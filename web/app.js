@@ -152,9 +152,81 @@ async function mountGameFiles(files) {
   return gameDir;
 }
 
+const isHiddenPath = (p) => p.split('/').some(seg => seg.startsWith('.'));
+
+function isBootFile(p) {
+  return p === 'eboot.bin' || p === 'eboot.bin.esbak' ||
+    p.startsWith('decrypted/eboot.bin') ||
+    p === 'sce_sys/param.json' || p === 'decrypted/sce_sys/param.json' ||
+    p.endsWith('.prx') || p.endsWith('.sprx');
+}
+
+// The picked folder may wrap the game root (e.g. a dump folder), so locate it.
+function findGameRoot(paths) {
+  let best = null;
+  for (const p of paths) {
+    const parts = p.split('/');
+    const name = parts[parts.length - 1];
+    let root = null;
+    if (name === 'eboot.bin' || name === 'eboot.bin.esbak') {
+      root = parts.slice(0, -1);
+    } else if (name === 'param.json' && parts[parts.length - 2] === 'sce_sys') {
+      root = parts.slice(0, -2);
+    }
+    if (!root) continue;
+    if (root[root.length - 1] === 'decrypted') root.pop();
+    if (best === null || root.length < best.length) best = root;
+  }
+  return best === null ? null : best.join('/');
+}
+
+async function showParamInfo(gameFiles) {
+  const paramFile = gameFiles.find(f =>
+    f.path === 'sce_sys/param.json' || f.path === 'decrypted/sce_sys/param.json');
+  if (!paramFile) return;
+  try {
+    const param = JSON.parse(await paramFile.file.text());
+    const title = param.localizedParameters?.['en-US']?.titleName || param.titleId || 'Unknown';
+    const ver = param.contentVersion || '';
+    const info = $('#game-info-content');
+    info.replaceChildren();
+    const rows = [[title, ''], [param.contentId || '', 'muted'], [`v${ver}`, 'muted']];
+    for (const [text, cls] of rows) {
+      const p = document.createElement('p');
+      if (cls) p.className = cls;
+      p.textContent = text;
+      info.appendChild(p);
+    }
+    info.firstChild.style.fontWeight = 'bold';
+    log(`Game: ${title} (${param.titleId}) v${ver}`, 'info');
+  } catch {}
+}
+
+async function bootFromFiles(files) {
+  files = files.filter(f => !isHiddenPath(f.path));
+  const root = findGameRoot(files.map(f => f.path));
+  if (root === null) {
+    log('No eboot.bin found in the selected folder.', 'error');
+    setStatus('error', 'Missing eboot.bin');
+    return;
+  }
+  const prefix = root ? `${root}/` : '';
+  if (root) log(`Game root: ${root}`);
+  const gameFiles = files
+    .filter(f => f.path.startsWith(prefix))
+    .map(f => ({ path: f.path.slice(prefix.length), file: f.file }));
+
+  await showParamInfo(gameFiles);
+
+  const bootFiles = gameFiles.filter(f => isBootFile(f.path));
+  log(`Loading ${bootFiles.length} boot files (of ${gameFiles.length} in game folder)...`);
+  const gameDir = await mountGameFiles(bootFiles);
+  if (gameDir) startGame(gameDir);
+}
+
 async function loadGameFromFolder() {
   if (!('showDirectoryPicker' in window)) {
-    log('File System Access API not supported; use Chrome or Edge.', 'error');
+    $('#folder-input').click();
     return;
   }
 
@@ -181,44 +253,18 @@ async function loadGameFromFolder() {
     }
   }
   await walk(dirHandle, '');
-
-  const hasEboot = files.some(f =>
-    f.path === 'eboot.bin' ||
-    f.path === 'eboot.bin.esbak' ||
-    f.path === 'decrypted/eboot.bin' ||
-    f.path === 'decrypted/eboot.bin.esbak'
-  );
-  if (!hasEboot) {
-    log('No eboot.bin found in the selected folder.', 'error');
-    setStatus('error', 'Missing eboot.bin');
-    return;
-  }
-
-  const paramFile = files.find(f =>
-    f.path === 'sce_sys/param.json' ||
-    f.path === 'decrypted/sce_sys/param.json'
-  );
-  if (paramFile) {
-    try {
-      const text = await paramFile.file.text();
-      const param = JSON.parse(text);
-      const title = param.localizedParameters?.['en-US']?.titleName || param.titleId || 'Unknown';
-      const contentId = param.contentId || '';
-      const ver = param.contentVersion || '';
-      $('#game-info-content').innerHTML = `
-        <p><strong>${title}</strong></p>
-        <p class="muted">${contentId}</p>
-        <p class="muted">v${ver}</p>
-      `;
-      log(`Game: ${title} (${param.titleId}) v${ver}`, 'info');
-    } catch {}
-  }
-
-  const ebootPath = await mountGameFiles(files);
-  if (!ebootPath) return;
-
-  startGame(ebootPath);
+  await bootFromFiles(files);
 }
+
+$('#folder-input').addEventListener('change', async (e) => {
+  const input = e.target;
+  const files = [...input.files].map(file => ({ path: file.webkitRelativePath || file.name, file }));
+  input.value = '';
+  if (!files.length) return;
+  log(`Reading folder: ${files[0].path.split('/')[0]} (${files.length} files)...`);
+  setStatus('checking', 'Loading game...');
+  await bootFromFiles(files);
+});
 
 async function loadEbootOnly() {
   const input = document.createElement('input');
@@ -405,17 +451,7 @@ document.addEventListener('drop', async (e) => {
       }
     }
     await walk(handle, '');
-    const hasEb = files.some(f =>
-      f.path === 'eboot.bin' || f.path === 'eboot.bin.esbak' ||
-      f.path === 'decrypted/eboot.bin' || f.path === 'decrypted/eboot.bin.esbak'
-    );
-    if (!hasEb) {
-      log('No eboot.bin found.', 'error');
-      setStatus('error', 'Missing eboot.bin');
-      return;
-    }
-    const ebootPath = await mountGameFiles(files);
-    if (ebootPath) startGame(ebootPath);
+    await bootFromFiles(files);
   } else {
     const file = item.getAsFile();
     if (file) {
@@ -448,16 +484,7 @@ async function autoLoadFromServer() {
     const gameDir = '/game';
     try { M.FS.mkdir(gameDir); } catch {}
 
-    // Only fetch essential files for boot (eboot, param.json, sce_module/*.prx)
-    const essential = manifest.filter(f =>
-      f.path === 'eboot.bin' ||
-      f.path === 'eboot.bin.esbak' ||
-      f.path.startsWith('decrypted/eboot.bin') ||
-      f.path === 'sce_sys/param.json' ||
-      f.path.startsWith('decrypted/sce_sys/param.json') ||
-      f.path.endsWith('.prx') ||
-      f.path.endsWith('.sprx')
-    );
+    const essential = manifest.filter(f => isBootFile(f.path));
     log(`Loading ${essential.length} essential files (of ${manifest.length} total)...`);
 
     let totalBytes = 0;

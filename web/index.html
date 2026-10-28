@@ -62,8 +62,9 @@
           <div class="drop-prompt">
             <div class="upload-art">&#128190;</div>
             <h2>Load PS5 Game</h2>
-            <p>Select a <strong>game folder</strong> containing <code>eboot.bin</code>, <code>Media/</code>, <code>sce_module/</code>, and <code>sce_sys/</code>.</p>
+            <p>Select a <strong>game folder</strong> (or a folder containing one) with <code>eboot.bin</code> and <code>sce_sys/</code>. Files are read locally and never leave your machine.</p>
             <button type="button" id="browse-folder-btn" class="btn btn-primary">Select Game Folder</button>
+            <input type="file" id="folder-input" webkitdirectory multiple hidden>
             <span class="separator">or</span>
             <button type="button" id="browse-eboot-btn" class="btn btn-secondary">Select eboot.bin Only</button>
           </div>

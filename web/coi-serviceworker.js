@@ -67,7 +67,7 @@ if (typeof window === 'undefined') {
     }
 
     navigator.serviceWorker
-      .register(new URL(import.meta?.url ?? document.currentScript?.src ?? 'coi-serviceworker.js', window.location.href).href)
+      .register(new URL(document.currentScript?.src ?? 'coi-serviceworker.js', window.location.href).href)
       .then(
         (registration) => {
           console.log('COOP/COEP Service Worker registered', registration.scope);

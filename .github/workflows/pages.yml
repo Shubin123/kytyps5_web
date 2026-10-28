@@ -1,0 +1,57 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/checkout@v7
+        with:
+          repository: Shubin123/kytyps5_emscripten
+          path: kytyps5_emscripten
+
+      - uses: mymindstorm/setup-emsdk@v16
+        with:
+          version: 6.0.13
+
+      - name: Build WASM runtime
+        working-directory: kytyps5_emscripten
+        run: |
+          emcmake cmake -S . -B build-web -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-web --parallel
+
+      - name: Copy runtime into site
+        run: |
+          node scripts/sync-runtime.mjs kytyps5_emscripten/build-web/bin
+          test -s web/runtime/kytyps5.wasm && test -s web/runtime/kytyps5.js
+
+      - uses: actions/configure-pages@v6
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: web
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
