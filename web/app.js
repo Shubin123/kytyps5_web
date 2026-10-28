@@ -100,9 +100,11 @@ async function initWasm() {
 
 function stringToWasm(str) {
   const M = state.Module;
-  const len = M.lengthBytesUTF8(str) + 1;
-  const ptr = M._malloc(len);
-  M.stringToUTF8(str, ptr, len);
+  const encoder = new TextEncoder();
+  const bytes = encoder.encode(str);
+  const ptr = M._malloc(bytes.length + 1);
+  M.HEAPU8.set(bytes, ptr);
+  M.HEAPU8[ptr + bytes.length] = 0;
   return ptr;
 }
 
@@ -248,13 +250,13 @@ function startGame(gameDir) {
   log('Initializing emulator...');
 
   try {
-    if (M._kyty_init) {
+    if (M.ccall) {
+      M.ccall('kyty_init', 'number', ['string'], ['{}']);
+      M.ccall('kyty_load_game', 'number', ['string'], [gameDir]);
+    } else if (M._kyty_init) {
       const cfgPtr = stringToWasm('{}');
       M._kyty_init(cfgPtr);
       M._free(cfgPtr);
-    }
-
-    if (M._kyty_load_game) {
       const pathPtr = stringToWasm(gameDir);
       M._kyty_load_game(pathPtr);
       M._free(pathPtr);
@@ -432,6 +434,75 @@ document.addEventListener('drop', async (e) => {
   }
 });
 
+// Auto-load from server (for e2e testing: ?autoload=1 with --game flag on server)
+async function autoLoadFromServer() {
+  log('Auto-loading game from server...');
+  setStatus('checking', 'Loading game...');
+
+  try {
+    const manifestResp = await fetch('/gamefiles.json');
+    if (!manifestResp.ok) {
+      log('No game manifest found on server (start server with --game <dir>)', 'error');
+      return;
+    }
+    const manifest = await manifestResp.json();
+    log(`Game manifest: ${manifest.length} files total`);
+
+    const M = state.Module;
+    if (!M || !M.FS) {
+      log('WASM not ready for file mounting', 'error');
+      return;
+    }
+
+    const gameDir = '/game';
+    try { M.FS.mkdir(gameDir); } catch {}
+
+    // Only fetch essential files for boot (eboot, param.json, sce_module/*.prx)
+    const essential = manifest.filter(f =>
+      f.path === 'eboot.bin' ||
+      f.path === 'eboot.bin.esbak' ||
+      f.path.startsWith('decrypted/eboot.bin') ||
+      f.path === 'sce_sys/param.json' ||
+      f.path.startsWith('decrypted/sce_sys/param.json') ||
+      f.path.endsWith('.prx') ||
+      f.path.endsWith('.sprx')
+    );
+    log(`Loading ${essential.length} essential files (of ${manifest.length} total)...`);
+
+    let totalBytes = 0;
+    let fileCount = 0;
+    for (const entry of essential) {
+      const fullPath = `${gameDir}/${entry.path}`;
+      const dir = fullPath.substring(0, fullPath.lastIndexOf('/'));
+      const parts = dir.split('/');
+      for (let i = 1; i <= parts.length; i++) {
+        const p = parts.slice(0, i).join('/');
+        if (p) try { M.FS.mkdir(p); } catch {}
+      }
+
+      log(`Fetching ${entry.path} (${(entry.size / 1024).toFixed(0)} KB)...`);
+      const resp = await fetch(`/gamefiles/${entry.path}`);
+      if (!resp.ok) { log(`Failed to fetch ${entry.path}: ${resp.status}`, 'warn'); continue; }
+      const data = new Uint8Array(await resp.arrayBuffer());
+      M.FS.writeFile(fullPath, data);
+      totalBytes += data.length;
+      fileCount++;
+    }
+
+    log(`Mounted ${fileCount} files (${(totalBytes / 1048576).toFixed(1)} MB)`, 'success');
+    startGame(gameDir);
+  } catch (err) {
+    log(`Auto-load error: ${err.message}`, 'error');
+    setStatus('error', 'Auto-load failed');
+  }
+}
+
 // Init
 log('KytyPS5 Web frontend starting...');
-initWasm();
+(async () => {
+  await initWasm();
+  const params = new URLSearchParams(location.search);
+  if (params.has('autoload') && state.wasmReady) {
+    await autoLoadFromServer();
+  }
+})();
