@@ -1,0 +1,12 @@
+{
+  "name": "kytyps5_web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Browser frontend and test harness for the KytyPS5 WebAssembly port",
+  "scripts": {
+    "start": "node scripts/server.mjs",
+    "sync": "node scripts/sync-runtime.mjs",
+    "test": "node tests/smoke.mjs"
+  }
+}

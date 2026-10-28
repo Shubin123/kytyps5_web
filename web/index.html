@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>KytyPS5 Web — PS5 Emulator</title>
+  <script src="coi-serviceworker.js"></script>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <button type="button" class="menu-toggle" id="btn-layout-menu" aria-label="Settings menu"
+            aria-expanded="false" aria-controls="layout-menu" title="Settings menu">
+      <span></span><span></span><span></span>
+    </button>
+    <h1>
+      <span class="ps-logo" aria-hidden="true">&#9654;</span>
+      KytyPS5 Web
+    </h1>
+    <p>PlayStation 5 Emulator &mdash; WebAssembly Port</p>
+    <div id="wasm-badge" class="status-badge checking">
+      <span class="indicator"></span>
+      <span id="wasm-status-text">Loading WASM&hellip;</span>
+    </div>
+  </header>
+
+  <aside class="layout-menu" id="layout-menu" hidden aria-label="Settings menu">
+    <div class="layout-menu-header">
+      <h2>Settings</h2>
+      <button type="button" class="btn btn-secondary layout-menu-close" id="btn-layout-menu-close" aria-label="Close menu">&times;</button>
+    </div>
+    <div class="control-group">
+      <label for="layout-screen-width">
+        <span>Screen width</span><output id="layout-screen-width-value">70%</output>
+      </label>
+      <input id="layout-screen-width" type="range" min="30" max="100" step="5" value="70">
+    </div>
+    <div class="control-group">
+      <label for="volume-slider">
+        <span>Volume</span><output id="volume-value">100%</output>
+      </label>
+      <input id="volume-slider" type="range" min="0" max="100" step="1" value="100">
+    </div>
+    <label class="toggle-label">
+      <input type="checkbox" id="mute-toggle">
+      Mute audio
+    </label>
+    <label class="toggle-label">
+      <input type="checkbox" id="show-fps" checked>
+      Show FPS overlay
+    </label>
+    <button type="button" class="btn btn-primary" id="btn-controls-help">Show controls</button>
+  </aside>
+  <div class="layout-menu-backdrop" id="layout-menu-backdrop" hidden></div>
+
+  <div class="main-layout">
+    <div class="canvas-panel">
+      <div id="screen-stage" class="screen-stage">
+        <canvas id="canvas" width="1920" height="1080" oncontextmenu="event.preventDefault()" tabindex="-1"></canvas>
+
+        <div id="drop-zone" class="drop-zone">
+          <div class="drop-prompt">
+            <div class="upload-art">&#128190;</div>
+            <h2>Load PS5 Game</h2>
+            <p>Select a <strong>game folder</strong> containing <code>eboot.bin</code>, <code>Media/</code>, <code>sce_module/</code>, and <code>sce_sys/</code>.</p>
+            <button type="button" id="browse-folder-btn" class="btn btn-primary">Select Game Folder</button>
+            <span class="separator">or</span>
+            <button type="button" id="browse-eboot-btn" class="btn btn-secondary">Select eboot.bin Only</button>
+          </div>
+        </div>
+
+        <div id="fps-overlay" class="fps-overlay">
+          <span id="fps-text">0 FPS</span>
+          <span id="frame-time-text">0.0 ms</span>
+        </div>
+
+        <button type="button" class="stage-fullscreen-btn" id="btn-fullscreen"
+                title="Fullscreen (Alt+Enter)" aria-label="Fullscreen">&#x26F6;</button>
+      </div>
+    </div>
+
+    <div class="side-panel" id="side-panel">
+      <div class="panel-section" id="game-info-panel">
+        <h3>Game Info</h3>
+        <div id="game-info-content" class="panel-content">
+          <p class="muted">No game loaded</p>
+        </div>
+      </div>
+
+      <div class="panel-section" id="log-panel">
+        <h3>
+          Log
+          <button type="button" class="btn-inline" id="btn-clear-log" title="Clear log">Clear</button>
+        </h3>
+        <div id="log-content" class="panel-content log-scroll"></div>
+      </div>
+
+      <div class="panel-section" id="diagnostics-panel">
+        <h3>Diagnostics</h3>
+        <div id="diagnostics-content" class="panel-content">
+          <table class="diag-table">
+            <tr><td>FPS</td><td id="diag-fps">--</td></tr>
+            <tr><td>Frame time</td><td id="diag-frametime">--</td></tr>
+            <tr><td>WASM heap</td><td id="diag-heap">--</td></tr>
+            <tr><td>Threads</td><td id="diag-threads">--</td></tr>
+            <tr><td>Draw calls</td><td id="diag-draws">--</td></tr>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <dialog id="controls-dialog">
+    <h2>Controls</h2>
+    <table class="controls-table">
+      <thead><tr><th>Action</th><th>Keyboard</th><th>Gamepad</th></tr></thead>
+      <tbody>
+        <tr><td>D-Pad / Move</td><td>Arrow keys / WASD</td><td>D-Pad / Left Stick</td></tr>
+        <tr><td>Cross (X)</td><td>Z / Enter</td><td>A / Cross</td></tr>
+        <tr><td>Circle (O)</td><td>X</td><td>B / Circle</td></tr>
+        <tr><td>Square</td><td>A</td><td>X / Square</td></tr>
+        <tr><td>Triangle</td><td>S</td><td>Y / Triangle</td></tr>
+        <tr><td>L1 / R1</td><td>Q / E</td><td>LB / RB</td></tr>
+        <tr><td>L2 / R2</td><td>1 / 3</td><td>LT / RT</td></tr>
+        <tr><td>Options</td><td>Escape</td><td>Start</td></tr>
+        <tr><td>Create</td><td>Tab</td><td>Back / Select</td></tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn btn-primary" id="btn-close-controls">Close</button>
+  </dialog>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
