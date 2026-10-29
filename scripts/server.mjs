@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { createReadStream } from 'node:fs';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -59,11 +60,32 @@ export function createServer({ isolation = true, gameDir = null } = {}) {
           response.end(json);
           return;
         }
+        const type = mime[path.extname(file)] || 'application/octet-stream';
+        const range = /^bytes=(\d+)-(\d*)$/.exec(request.headers.range || '');
+        if (range) {
+          const start = Number(range[1]);
+          const end = Math.min(range[2] ? Number(range[2]) : info.size - 1, info.size - 1);
+          if (start > end) {
+            response.writeHead(416, { ...headers, 'Content-Range': `bytes */${info.size}` });
+            response.end();
+            return;
+          }
+          response.writeHead(206, {
+            ...headers,
+            'Content-Type': type,
+            'Content-Length': end - start + 1,
+            'Content-Range': `bytes ${start}-${end}/${info.size}`,
+          });
+          if (request.method === 'HEAD') response.end();
+          else createReadStream(file, { start, end }).pipe(response);
+          return;
+        }
         const data = await readFile(file);
         response.writeHead(200, {
           ...headers,
-          'Content-Type': mime[path.extname(file)] || 'application/octet-stream',
+          'Content-Type': type,
           'Content-Length': data.length,
+          'Accept-Ranges': 'bytes',
         });
         response.end(request.method === 'HEAD' ? undefined : data);
         return;

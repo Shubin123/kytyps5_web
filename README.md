@@ -4,13 +4,15 @@ Live: https://shubin123.github.io/kytyps5_web/
 Backend: https://github.com/Shubin123/kytyps5_emscripten
 Frontend: https://github.com/Shubin123/kytyps5_web
 
-**Status:** experimental. The game's `eboot.bin` loads, relocates, and runs in an x86-64 interpreter with PS5 SDK calls stubbed, but nothing renders yet: SDK stubs return 0, so games stall waiting on system calls.
+**Status:** experimental. River City Girls (PPSA04075, Unity/IL2CPP) boots through Unity and IL2CPP start-up in the x86-64 interpreter and starts loading its first scene, with its job, loading, graphics and FMOD audio threads running. Nothing is drawn yet (the GPU is a stand-in that only executes synchronization packets), so the canvas stays black, and the interpreter is far too slow (about 7 million guest instructions per second) to reach the title screen in reasonable time.
 
 ## Hosted site
 
 The [Pages workflow](.github/workflows/pages.yml) builds the WASM runtime from `kytyps5_emscripten` and deploys `web/` on every push to `main` (re-run it manually after backend changes). GitHub Pages can't send COOP/COEP headers, so `coi-serviceworker.js` adds them to enable `SharedArrayBuffer`.
 
-Pick a game folder, or any folder containing one. Only the boot files (`eboot.bin`, `param.json`, `.prx` modules) are read, and they stay in the browser.
+Pick a game folder, or any folder containing one. The boot files, modules and game data are copied into the emulator's in-memory file system; large media (`.resS`, `.bank`, videos) is read in 1 MB chunks only when the game asks for it. Nothing leaves the browser.
+
+Debug parameters: `?watch=<hex,...>` logs when execution reaches those addresses and `?watchmem=<hex,...>` logs the instructions that change those quadwords.
 
 Test the hosted site with a local game folder:
 

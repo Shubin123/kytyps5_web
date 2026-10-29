@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // Boots a game the way a user does on the hosted site: pick a folder, let it run, report what happened.
 // Usage: node tests/pages.mjs <site-url> <game-folder> [screenshot.png]
+// Env: RUN_MS (how long to run), LOG_OUT (file to save the full emulator log to)
 
+import { writeFileSync } from 'node:fs';
 import { chromium } from 'playwright';
 
 const [url, folder, shot] = process.argv.slice(2);
@@ -53,6 +55,7 @@ try {
   await sleep(RUN_MS);
 
   const log = await logText();
+  if (process.env.LOG_OUT) writeFileSync(process.env.LOG_OUT, log);
   const frames = [...log.matchAll(/frame (\d+): executed (\d+) insns, total=(\d+), RIP=(0x[0-9a-f]+), HLE calls=(\d+)/g)]
     .map(m => ({ n: +m[1], insns: +m[2], total: +m[3], rip: m[4], hle: +m[5] }));
   const last = frames[frames.length - 1];
@@ -77,6 +80,11 @@ try {
   console.log(`threads created:      ${threads.length ? threads.join(', ') : 'none'}`);
   if (allBlocked) console.log(`deadlock:             ${allBlocked.replace(/^\[threads\] /, '')}`);
   console.log(`files opened:         ${opens.length ? opens.slice(0, 20).join(', ') : 'none'}`);
+  const displayBuffers = log.match(/\[gpu\] registered [^\n\[]*/)?.[0];
+  const flips = Math.max(0, ...[...log.matchAll(/\[gpu\] flip #(\d+)/g)].map(m => +m[1]));
+  const draws = /\[gpu\] draw\/dispatch packets/.test(log);
+  console.log(`display buffers:      ${displayBuffers ? displayBuffers.replace('[gpu] ', '') : 'none registered'}`);
+  console.log(`flips (logged):       ${flips}${draws ? ' (draw packets reached; not rendered yet)' : ''}`);
   const watches = [...log.matchAll(/\[watch\] ([^\n]*)/g)].map(m => m[1].replace(/\[\d+:\d+:\d+ [AP]M\].*$/, ''));
   if (watches.length) console.log(`watch hits:\n  ${watches.join('\n  ')}`);
   console.log(`game output (${gameLines.length} lines):`);

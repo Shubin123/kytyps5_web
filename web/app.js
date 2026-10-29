@@ -102,7 +102,7 @@ function stringToWasm(str) {
   const M = state.Module;
   const encoder = new TextEncoder();
   const bytes = encoder.encode(str);
-  const ptr = M._malloc(bytes.length + 1);
+  const ptr = M._malloc(bytes.length + 1) >>> 0;  // wasm memory can exceed 2 GB
   const heap = new Uint8Array(M.wasmMemory ? M.wasmMemory.buffer : M.HEAPU8.buffer);
   heap.set(bytes, ptr);
   heap[ptr + bytes.length] = 0;
@@ -223,12 +223,14 @@ async function bootFromFiles(files) {
   await showParamInfo(gameFiles);
 
   const bootFiles = gameFiles.filter(f => isBootFile(f.path));
-  const streamed = gameFiles.filter(f => STREAMED_MEDIA.test(f.path));
-  const streamedGB = streamed.reduce((n, f) => n + f.file.size, 0) / 1e9;
+  const streamed = gameFiles.filter(f => STREAMED_MEDIA.test(f.path)).map(f => ({
+    path: f.path, size: f.file.size, read: (start, end) => f.file.slice(start, end).arrayBuffer(),
+  }));
+  const streamedGB = streamed.reduce((n, f) => n + f.size, 0) / 1e9;
   log(`Loading ${bootFiles.length} files (of ${gameFiles.length}); ${streamed.length} streamed media files ` +
-      `(${streamedGB.toFixed(1)} GB) are not loaded yet`);
+      `(${streamedGB.toFixed(1)} GB) are read on demand`);
   const gameDir = await mountGameFiles(bootFiles);
-  if (gameDir) startGame(gameDir);
+  if (gameDir) startGame(gameDir, streamed);
 }
 
 async function loadGameFromFolder() {
@@ -290,7 +292,38 @@ async function loadEbootOnly() {
   input.click();
 }
 
-function startGame(gameDir) {
+// Streamed files are read in 1 MB chunks (kChunkSize in the emulator's hle.cpp).
+const CHUNK = 1 << 20;
+
+function serviceStreamedReads() {
+  const M = state.Module;
+  if (!M._kyty_lazy_request) return;
+  for (let req = M._kyty_lazy_request(); req >= 0; req = M._kyty_lazy_request()) {
+    const id = Math.floor(req / 1e7), chunk = req % 1e7;
+    const f = state.streamed[id];
+    if (!f) continue;
+    const start = chunk * CHUNK, end = Math.min(start + CHUNK, f.size);
+    f.read(start, end).then((buf) => {
+      const ptr = M._malloc(buf.byteLength) >>> 0;
+      M.HEAPU8.set(new Uint8Array(buf), ptr);
+      M._kyty_lazy_provide(id, chunk, ptr, buf.byteLength);
+      M._free(ptr);
+    }).catch((err) => log(`Streaming read failed for ${f.path}: ${err.message}`, 'warn'));
+  }
+}
+
+// Moves the stereo frames the game's audio output queued this frame into the AudioWorklet.
+const AUDIO_FRAMES = 8192;
+
+function drainAudio() {
+  const M = state.Module;
+  if (!M._kyty_audio_read) return;
+  if (!state.audioBuf) state.audioBuf = M._malloc(AUDIO_FRAMES * 2 * 4) >>> 0;
+  const frames = M._kyty_audio_read(state.audioBuf, AUDIO_FRAMES);
+  if (frames > 0) audio.pushSamples(M.HEAPF32.slice(state.audioBuf / 4, state.audioBuf / 4 + frames * 2));
+}
+
+function startGame(gameDir, streamed = []) {
   const M = state.Module;
   if (!M) {
     log('WASM module not loaded.', 'error');
@@ -311,6 +344,17 @@ function startGame(gameDir) {
       for (const a of watch ? watch.split(',') : []) {
         const addr = parseInt(a, 16);
         if (Number.isFinite(addr) && M._kyty_watch) M.ccall('kyty_watch', null, ['number'], [addr]);
+      }
+      // ?watchmem=10667100 logs the instructions that change the quadword at that address.
+      const watchMem = new URLSearchParams(location.search).get('watchmem');
+      for (const a of watchMem ? watchMem.split(',') : []) {
+        const addr = parseInt(a, 16);
+        if (Number.isFinite(addr) && M._kyty_watch_memory) M.ccall('kyty_watch_memory', null, ['number'], [addr]);
+      }
+      state.streamed = [];
+      for (const f of M._kyty_lazy_register ? streamed : []) {
+        const id = M.ccall('kyty_lazy_register', 'number', ['string', 'number'], [`${gameDir}/${f.path}`, f.size]);
+        state.streamed[id] = f;
       }
       M.ccall('kyty_load_game', 'number', ['string'], [gameDir]);
     } else if (M._kyty_init) {
@@ -347,9 +391,11 @@ function frameLoop(timestamp) {
         [padState.buttons, padState.lx, padState.ly, padState.rx, padState.ry, padState.l2, padState.r2]);
     }
 
+    serviceStreamedReads();
     if (M._kyty_frame) {
       M._kyty_frame();
     }
+    drainAudio();
   } catch (err) {
     if (!frameLoop._errLogged) {
       log(`Frame error: ${err.message}`, 'warn');
@@ -521,7 +567,12 @@ async function autoLoadFromServer() {
     }
 
     log(`Mounted ${fileCount} files (${(totalBytes / 1048576).toFixed(1)} MB)`, 'success');
-    startGame(gameDir);
+    const streamed = manifest.filter(f => STREAMED_MEDIA.test(f.path)).map(f => ({
+      path: f.path, size: f.size,
+      read: (start, end) => fetch(`/gamefiles/${f.path}`, { headers: { Range: `bytes=${start}-${end - 1}` } })
+        .then(r => r.arrayBuffer()),
+    }));
+    startGame(gameDir, streamed);
   } catch (err) {
     log(`Auto-load error: ${err.message}`, 'error');
     setStatus('error', 'Auto-load failed');
