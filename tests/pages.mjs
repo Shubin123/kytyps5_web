@@ -56,18 +56,27 @@ try {
   const frames = [...log.matchAll(/frame (\d+): executed (\d+) insns, total=(\d+), RIP=(0x[0-9a-f]+), HLE calls=(\d+)/g)]
     .map(m => ({ n: +m[1], insns: +m[2], total: +m[3], rip: m[4], hle: +m[5] }));
   const last = frames[frames.length - 1];
-  const halted = log.match(/.*halting.*/)?.[0];
+  const halted = log.match(/.*(halting|halted at|game exited|abort\(\)|stack-protector|pure virtual).*/)?.[0];
   const unimpl = new Set([...log.matchAll(/Unimpl[^\n\[]*/g)].map(m => m[0].replace(/ at RIP=\S+/, '')));
-  const nids = new Set([...log.matchAll(/NID=(\S+)/g)].map(m => m[1]));
+  const reached = [...log.matchAll(/first call: (\S+)( \(not implemented)?/g)].map(m => m[1] + (m[2] ? '*' : ''));
+  const gameLines = [...log.matchAll(/\[game\] ([^\n]*)/g)].map(m => m[1].replace(/\[\d+:\d+:\d+ [AP]M\].*$/, ''));
+  const opens = [...log.matchAll(/\[hle\] open (\S+) -> (\w+)/g)].map(m => `${m[1]} (${m[2]})`);
+  const threads = [...log.matchAll(/\[hle\] thread (\S+)/g)].map(m => m[1]);
   const fps = await page.$eval('#fps-text', el => el.textContent).catch(() => '?');
 
   console.log('\n--- report ---');
   console.log(`frames logged:        ${frames.length}${last ? ` (last frame ${last.n})` : ''}`);
   console.log(`instructions:         ${last?.total ?? 0}`);
-  console.log(`HLE calls:            ${last?.hle ?? 0} (distinct NIDs in first 100 calls: ${nids.size})`);
+  console.log(`SDK calls:            ${last?.hle ?? 0}`);
   console.log(`frame rate:           ${fps}`);
   console.log(`halted:               ${halted ?? 'no'}`);
-  console.log(`unimplemented opcodes: ${unimpl.size ? [...unimpl].join('; ') : 'none logged'}`);
+  console.log(`unimplemented VEX:    ${unimpl.size ? [...unimpl].join('; ') : 'none logged'}`);
+  console.log(`SDK functions reached: ${reached.length} (${reached.filter(n => n.endsWith('*')).length} still stubs, marked *)`);
+  console.log(`  in order: ${reached.join(', ')}`);
+  console.log(`threads requested:    ${threads.length ? threads.join(', ') : 'none'}`);
+  console.log(`files opened:         ${opens.length ? opens.slice(0, 20).join(', ') : 'none'}`);
+  console.log(`game output (${gameLines.length} lines):`);
+  for (const l of gameLines.slice(0, 25)) console.log(`  | ${l}`);
 
   if (frames.length >= 4) {
     const tail = frames.slice(-8);
@@ -75,11 +84,15 @@ try {
     const deltas = tail.slice(1).map((f, i) => f.hle - tail[i].hle);
     const perCall = deltas.map((d, i) => (d ? tail[i + 1].insns / d : Infinity));
     const steady = perCall.every(p => Math.abs(p - perCall[0]) / perCall[0] < 0.01);
+    const codeRips = tail.map(f => parseInt(f.rip, 16)).filter(r => r < 0x20000000);
+    const window = codeRips.length ? Math.max(...codeRips) - Math.min(...codeRips) : Infinity;
     console.log(`last ${tail.length} frames:        RIPs ${[...ripSet].join(', ')}`);
     console.log(`                      ${deltas[0] ?? 0} HLE calls per ${tail[1].insns} insns per frame`);
-    if (steady && ripSet.size <= 8) {
+    if (deltas.every(d => d === 0) && window < 256) {
+      console.log(`loop check:           STUCK — spinning in a ${window}-byte code window with no SDK calls`);
+    } else if (steady && ripSet.size <= 8) {
       console.log(`loop check:           STUCK — every frame repeats one ~${Math.round(perCall[0])}-instruction loop` +
-        ' around a single SDK call, which the stubs answer with 0');
+        ' around a single SDK call');
     } else {
       console.log('loop check:           execution varies between frames');
     }

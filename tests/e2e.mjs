@@ -146,7 +146,8 @@ try {
   logLine(`\n${passed}/${milestones.length} milestones reached`);
 
   if (passed >= 6) {
-    logLine('SUCCESS: Game binary executing with HLE interception verified');
+    logLine('SUCCESS: boot pipeline verified (load, relocate, execute, SDK calls). This does not check that ' +
+      'the game renders or makes progress; tests/pages.mjs reports stalls.');
     exitCode = 0;
   } else if (passed >= 4) {
     logLine('PARTIAL: Core pipeline works but game execution limited');
