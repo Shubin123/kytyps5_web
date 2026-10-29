@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Boots a game the way a user does on the hosted site: pick a folder, let it run, report what happened.
 // Usage: node tests/pages.mjs <site-url> <game-folder> [screenshot.png]
-// Env: RUN_MS (how long to run), LOG_OUT (file to save the full emulator log to)
+// Env: RUN_MS (how long to run), LOG_OUT (file to save the full emulator log to), SHOTS (frames to screenshot).
+// Scripted input goes in the URL: <site-url>?press=flip:buttons:frames,...
 
 import { writeFileSync } from 'node:fs';
 import { chromium } from 'playwright';
@@ -21,7 +22,8 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 try {
   const page = await browser.newPage();
   page.on('pageerror', err => console.error(`[page error] ${err.message}`));
-  const logText = () => page.$eval('#log-content', el => el.innerText).catch(() => '');
+  const logText = () => page.evaluate(() => window.kytyLog?.() ?? document.querySelector('#log-content').innerText)
+    .catch(() => '');
   const waitLog = async (re, ms) => {
     const start = Date.now();
     while (Date.now() - start < ms) {
@@ -52,7 +54,18 @@ try {
   if (!/running/.test(started[0])) throw new Error(`boot failed: ${started[0]}`);
   console.log(`game started; running ${RUN_MS / 1000}s...`);
 
-  await sleep(RUN_MS);
+  // SHOTS=100,450: a canvas screenshot (next to the final one) when the game has presented that many frames.
+  const shots = (process.env.SHOTS || '').split(',').filter(Boolean).map(Number).sort((a, b) => a - b);
+  const runEnd = Date.now() + RUN_MS;
+  while (Date.now() < runEnd) {
+    await sleep(Math.min(2000, Math.max(0, runEnd - Date.now())));
+    const flips = await page.evaluate(() => window.kytyFlips?.() ?? 0).catch(() => 0);
+    while (shots.length && flips >= shots[0]) {
+      const path = (shot || 'canvas.png').replace(/\.png$/, `-${shots.shift()}.png`);
+      await page.locator('#canvas').screenshot({ path });
+      console.log(`frame ${flips}: screenshot ${path}`);
+    }
+  }
 
   const log = await logText();
   if (process.env.LOG_OUT) writeFileSync(process.env.LOG_OUT, log);
@@ -81,10 +94,14 @@ try {
   if (allBlocked) console.log(`deadlock:             ${allBlocked.replace(/^\[threads\] /, '')}`);
   console.log(`files opened:         ${opens.length ? opens.slice(0, 20).join(', ') : 'none'}`);
   const displayBuffers = log.match(/\[gpu\] registered [^\n\[]*/)?.[0];
-  const flips = Math.max(0, ...[...log.matchAll(/\[gpu\] flip #(\d+)/g)].map(m => +m[1]));
-  const draws = /\[gpu\] draw\/dispatch packets/.test(log);
+  // [raster] frame lines summarize what was drawn for a presented frame (each of the first 60, then every 60th).
+  const rendered = [...log.matchAll(/\[raster\] frame (\d+): (\d+) draws, (\d+) dispatches, (\d+) pixels/g)];
+  const lastRendered = rendered[rendered.length - 1];
+  const movies = [...log.matchAll(/\[avplayer\] \/app0\/(\S+): (\d+) ms/g)].map(m => `${m[1].split('/').pop()} (${m[2]} ms)`);
   console.log(`display buffers:      ${displayBuffers ? displayBuffers.replace('[gpu] ', '') : 'none registered'}`);
-  console.log(`flips (logged):       ${flips}${draws ? ' (draw packets reached; not rendered yet)' : ''}`);
+  console.log(`frames presented:     ${lastRendered ? `${lastRendered[1]}+ (frame ${lastRendered[1]}: ${lastRendered[2]} draws, ` +
+    `${lastRendered[4]} pixels shaded)` : 'none'}`);
+  console.log(`movies played:        ${movies.length ? movies.join(', ') : 'none'}`);
   const watches = [...log.matchAll(/\[watch\] ([^\n]*)/g)].map(m => m[1].replace(/\[\d+:\d+:\d+ [AP]M\].*$/, ''));
   if (watches.length) console.log(`watch hits:\n  ${watches.join('\n  ')}`);
   console.log(`game output (${gameLines.length} lines):`);

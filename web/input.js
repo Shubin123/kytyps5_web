@@ -70,12 +70,9 @@ export class InputManager {
     if (k.has('ArrowLeft'))                 r.buttons |= PS5_LEFT;
     if (k.has('ArrowRight'))                r.buttons |= PS5_RIGHT;
 
-    if (k.has('ArrowUp') || k.has('KeyW'))  r.ly = Math.min(r.ly, -1);
-    if (k.has('ArrowDown') || k.has('KeyS') && !k.has('KeyA') ? false : k.has('KeyS') ? false : false) {} // handled by d-pad
-    if (k.has('ArrowLeft') || k.has('KeyA') && !r.buttons) {} // handled by d-pad
-    // Keyboard left-stick emulation via WASD (d-pad takes priority above)
+    // The arrow keys (and W for up) also move the left stick.
     let kx = 0, ky = 0;
-    if (k.has('KeyW')) ky -= 1;
+    if (k.has('ArrowUp') || k.has('KeyW')) ky -= 1;
     if (k.has('ArrowDown')) ky += 1;
     if (k.has('ArrowLeft')) kx -= 1;
     if (k.has('ArrowRight')) kx += 1;

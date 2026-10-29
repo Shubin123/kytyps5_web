@@ -20,10 +20,21 @@ const input = new InputManager(canvas);
 const audio = new AudioManager();
 const diag = new Diagnostics();
 
+// The panel shows the latest 2000 lines; the test harness reads the log through window.kytyLog(), which keeps
+// the start of the session and a longer recent window.
+const logStart = [], logRecent = [];
+window.kytyLog = () => [...logStart, ...logRecent].join('\n');
+
 function log(msg, level = 'info') {
+  const line = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  if (logStart.length < 20000) logStart.push(line);
+  else {
+    logRecent.push(line);
+    if (logRecent.length > 50000) logRecent.splice(0, 10000);
+  }
   const el = document.createElement('div');
   el.className = `log-${level}`;
-  el.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  el.textContent = line;
   logContent.appendChild(el);
   logContent.scrollTop = logContent.scrollHeight;
   if (logContent.children.length > 2000) logContent.removeChild(logContent.firstChild);
@@ -377,6 +388,19 @@ function startGame(gameDir, streamed = []) {
   }
 }
 
+// ?press=90:0x200:4,130:1:3 holds buttons (input.js bits) for a number of frames from a frame the game has
+// presented, as the native runner's KYTY_PRESS does: scripted input for tests.
+const scriptedPresses = (new URLSearchParams(location.search).get('press') || '').split(',').filter(Boolean)
+  .map(s => s.split(':').map(Number)).map(([flip, buttons, frames]) => ({ flip, buttons, frames }));
+
+window.kytyFlips = () => state.Module?._kyty_flip_count?.() ?? 0;
+
+function scriptedButtons(M) {
+  if (!scriptedPresses.length || !M._kyty_flip_count) return 0;
+  const flip = M._kyty_flip_count();
+  return scriptedPresses.reduce((b, p) => (flip >= p.flip && flip < p.flip + p.frames ? b | p.buttons : b), 0);
+}
+
 function frameLoop(timestamp) {
   if (!state.running) return;
 
@@ -385,6 +409,7 @@ function frameLoop(timestamp) {
 
   try {
     const padState = input.poll();
+    padState.buttons |= scriptedButtons(M);
     if (M.ccall) {
       M.ccall('kyty_input_values', null,
         ['number', 'number', 'number', 'number', 'number', 'number', 'number'],
