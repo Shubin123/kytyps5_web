@@ -78,6 +78,7 @@ try {
   console.log(`game output (${gameLines.length} lines):`);
   for (const l of gameLines.slice(0, 25)) console.log(`  | ${l}`);
 
+  let stuck = false;
   if (frames.length >= 4) {
     const tail = frames.slice(-8);
     const ripSet = new Set(tail.map(f => f.rip));
@@ -89,8 +90,10 @@ try {
     console.log(`last ${tail.length} frames:        RIPs ${[...ripSet].join(', ')}`);
     console.log(`                      ${deltas[0] ?? 0} HLE calls per ${tail[1].insns} insns per frame`);
     if (deltas.every(d => d === 0) && window < 256) {
+      stuck = true;
       console.log(`loop check:           STUCK — spinning in a ${window}-byte code window with no SDK calls`);
     } else if (steady && ripSet.size <= 8) {
+      stuck = true;
       console.log(`loop check:           STUCK — every frame repeats one ~${Math.round(perCall[0])}-instruction loop` +
         ' around a single SDK call');
     } else {
@@ -103,7 +106,7 @@ try {
     console.log(`canvas screenshot:    ${shot}`);
   }
 
-  exitCode = halted || !last ? 1 : 0;
+  exitCode = halted || stuck || !last ? 1 : 0;
 } catch (err) {
   console.error(`FAIL: ${err.message}`);
 } finally {
