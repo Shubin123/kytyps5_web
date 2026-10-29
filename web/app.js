@@ -154,11 +154,15 @@ async function mountGameFiles(files) {
 
 const isHiddenPath = (p) => p.split('/').some(seg => seg.startsWith('.'));
 
+// Streamed media (videos, texture streams, audio banks) is most of a game's size; it isn't loaded yet.
+const STREAMED_MEDIA = /\.(resS|bank|mp4|m4v)$/i;
+
 function isBootFile(p) {
   return p === 'eboot.bin' || p === 'eboot.bin.esbak' ||
     p.startsWith('decrypted/eboot.bin') ||
     p === 'sce_sys/param.json' || p === 'decrypted/sce_sys/param.json' ||
-    p.endsWith('.prx') || p.endsWith('.sprx');
+    p.endsWith('.prx') || p.endsWith('.sprx') || p.endsWith('.prx.esbak') || p.endsWith('.sprx.esbak') ||
+    (p.startsWith('Media/') && !STREAMED_MEDIA.test(p));
 }
 
 // The picked folder may wrap the game root (e.g. a dump folder), so locate it.
@@ -219,7 +223,10 @@ async function bootFromFiles(files) {
   await showParamInfo(gameFiles);
 
   const bootFiles = gameFiles.filter(f => isBootFile(f.path));
-  log(`Loading ${bootFiles.length} boot files (of ${gameFiles.length} in game folder)...`);
+  const streamed = gameFiles.filter(f => STREAMED_MEDIA.test(f.path));
+  const streamedGB = streamed.reduce((n, f) => n + f.file.size, 0) / 1e9;
+  log(`Loading ${bootFiles.length} files (of ${gameFiles.length}); ${streamed.length} streamed media files ` +
+      `(${streamedGB.toFixed(1)} GB) are not loaded yet`);
   const gameDir = await mountGameFiles(bootFiles);
   if (gameDir) startGame(gameDir);
 }
@@ -299,6 +306,12 @@ function startGame(gameDir) {
   try {
     if (M.ccall) {
       M.ccall('kyty_init', 'number', ['string'], ['{}']);
+      // Debug: ?watch=c17be0,f29fc0 logs when execution reaches those addresses.
+      const watch = new URLSearchParams(location.search).get('watch');
+      for (const a of watch ? watch.split(',') : []) {
+        const addr = parseInt(a, 16);
+        if (Number.isFinite(addr) && M._kyty_watch) M.ccall('kyty_watch', null, ['number'], [addr]);
+      }
       M.ccall('kyty_load_game', 'number', ['string'], [gameDir]);
     } else if (M._kyty_init) {
       const cfgPtr = stringToWasm('{}');

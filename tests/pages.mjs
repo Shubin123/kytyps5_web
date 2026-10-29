@@ -61,7 +61,8 @@ try {
   const reached = [...log.matchAll(/first call: (\S+)( \(not implemented)?/g)].map(m => m[1] + (m[2] ? '*' : ''));
   const gameLines = [...log.matchAll(/\[game\] ([^\n]*)/g)].map(m => m[1].replace(/\[\d+:\d+:\d+ [AP]M\].*$/, ''));
   const opens = [...log.matchAll(/\[hle\] open (\S+) -> (\w+)/g)].map(m => `${m[1]} (${m[2]})`);
-  const threads = [...log.matchAll(/\[hle\] thread (\S+)/g)].map(m => m[1]);
+  const threads = [...log.matchAll(/\[threads\] created (.+?) \(entry/g)].map(m => m[1]);
+  const allBlocked = log.match(/\[threads\] every thread is blocked:[^\n]*/)?.[0];
   const fps = await page.$eval('#fps-text', el => el.textContent).catch(() => '?');
 
   console.log('\n--- report ---');
@@ -73,8 +74,11 @@ try {
   console.log(`unimplemented VEX:    ${unimpl.size ? [...unimpl].join('; ') : 'none logged'}`);
   console.log(`SDK functions reached: ${reached.length} (${reached.filter(n => n.endsWith('*')).length} still stubs, marked *)`);
   console.log(`  in order: ${reached.join(', ')}`);
-  console.log(`threads requested:    ${threads.length ? threads.join(', ') : 'none'}`);
+  console.log(`threads created:      ${threads.length ? threads.join(', ') : 'none'}`);
+  if (allBlocked) console.log(`deadlock:             ${allBlocked.replace(/^\[threads\] /, '')}`);
   console.log(`files opened:         ${opens.length ? opens.slice(0, 20).join(', ') : 'none'}`);
+  const watches = [...log.matchAll(/\[watch\] ([^\n]*)/g)].map(m => m[1].replace(/\[\d+:\d+:\d+ [AP]M\].*$/, ''));
+  if (watches.length) console.log(`watch hits:\n  ${watches.join('\n  ')}`);
   console.log(`game output (${gameLines.length} lines):`);
   for (const l of gameLines.slice(0, 25)) console.log(`  | ${l}`);
 
